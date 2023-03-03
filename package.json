@@ -1,0 +1,30 @@
+{
+  "name": "mariosequencer",
+  "version": "1.0.0",
+  "description": "Mario Paint inspired composer / sequencer",
+  "main": "src/app.ts",
+  "dependencies": {},
+  "devDependencies": {
+    "ts-loader": "^9.4.2",
+    "typescript": "^4.9.5",
+    "webpack-dev-server": "^4.11.1",
+    "html-webpack-plugin": "^5.5.0",
+    "webpack": "^5.75.0",
+    "webpack-cli": "^5.0.1"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "bundle": "webpack-cli",
+    "dev": "webpack-dev-server"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/minghai/MarioSequencer.git"
+  },
+  "author": "Original version: minghai, This version: t0mgerman",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/minghai/MarioSequencer/issues"
+  },
+  "homepage": "https://github.com/minghai/MarioSequencer#readme"
+}

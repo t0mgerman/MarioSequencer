@@ -1,6 +1,19 @@
 Mario Sequencer
 ====
 
+This is a fork of [@Minghai](https://github.com/minghai)'s awesome [MarioSequencer](https://github.com/minghai/MarioSequencer)
+
+I wanted to better understand the code, and also wanted to start porting it to TypeScript. I've started to break the code in to modules and made the app itself class-based, this is with a view to refactoring things later and potentially adding enhancements.
+
+This version can be built using webpack `npm run build` or developed using `webpack-dev-server`. A `launch.json` config for VSCode is provided, so you can just press F5 to debug once you've got the code cloned.
+
+Original acknowledgements/credits and info is included below:
+
+___
+
+### Original Readme.md
+___
+
 This is good old Mario Sequencer Web Edition.
 Works only on Chrome (at least for now).
 

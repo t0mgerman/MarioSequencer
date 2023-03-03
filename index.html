@@ -15,28 +15,28 @@
 </style>
 </head>
 <body>
-<select id="magnify">
-  <option value="1">1x1</option>
-  <option value="2" selected>2x2</option>
-  <option value="3">3x3</option>
-</select>
-<div id="console"
-  style="position: relative; margin:0px auto; padding:0px; border:0px;">
-  <canvas id="layer1" class="game"
-    style="position: static; z-index: 0; opacity:1"></canvas>
-  <canvas id="layer2" class="game"
-    style="position: absolute; z-index: 1;"></canvas>
-  <image id="spinner" src="image/loading_transparent_.gif" width="46px"
-    style="position: absolute; top:35%; left:47%; z-index:4;" />
-</div>
-<center>
-<button onclick="download()">Download</button>
-</center>
-<script src="shared.js"></script>
-<div class="github-fork-ribbon-wrapper right-bottom">
-  <div class="github-fork-ribbon">
-      <a href="https://github.com/minghai/MarioSequencer">Fork me on GitHub</a>
+  <select id="magnify">
+    <option value="1">1x1</option>
+    <option value="2" selected>2x2</option>
+    <option value="3">3x3</option>
+  </select>
+  <div id="app"
+    style="position: relative; margin:0px auto; padding:0px; border:0px;">
+    <canvas id="layer1" class="game"
+      style="position: static; z-index: 0; opacity:1"></canvas>
+    <canvas id="layer2" class="game"
+      style="position: absolute; z-index: 1;"></canvas>
+    <image id="spinner" src="image/loading_transparent_.gif" width="46px"
+      style="position: absolute; top:35%; left:47%; z-index:4;" />
   </div>
-</div>
+  <center>
+  <button id="download">Download</button>
+  </center>
+  <!-- <script src="shared.js"></script> -->
+  <div class="github-fork-ribbon-wrapper right-bottom">
+    <div class="github-fork-ribbon">
+        <a href="https://github.com/minghai/MarioSequencer">Fork me on GitHub</a>
+    </div>
+  </div>
 </body>
 </html>
