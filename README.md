@@ -7,7 +7,14 @@ I wanted to better understand the code, and also wanted to start porting it to T
 
 This version can be built using webpack `npm run build` or developed using `webpack-dev-server`. A `launch.json` config for VSCode is provided, so you can just press F5 to debug once you've got the code cloned.
 
-Original acknowledgements/credits and info is included below:
+### Changelog
+
+|Date | Changes|
+|---|---|
+| 11 Mar 2023 | Added scale-to-page, Undo Dog, Scroll Wheel listener, changed keyboard listener, moved Pseudo Selector JS to SASS modules + use CSS variables
+| 03 Mar 2023 | Working Tyepscript + Webpack Build
+
+## **Original version info/acknowledgements/credits  included below:**
 
 ___
 

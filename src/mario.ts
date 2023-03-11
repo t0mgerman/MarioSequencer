@@ -71,7 +71,7 @@ export class Mario {
     }
 
     private _checkMarioShouldJump() {
-        const notes = this.sequencer.curScore.notes[this.pos - 1];
+        const notes = this.sequencer.appState.curScore.notes[this.pos - 1];
         if (notes == undefined || notes.length == 0) {
             this.isJumping = false;
         } else if (notes.length == 1) {
@@ -82,23 +82,23 @@ export class Mario {
 
     public play(timeStamp: number) {
         const { sequencer } = this;
-        const tempo = sequencer.curScore.tempo
+        const tempo = sequencer.appState.curScore.tempo
         if (this.mario) {
             let diff = timeStamp - this.lastTime; // both are [ms]
             if (diff > 32) diff = 16; // When user hide the tag, force it
             this.lastTime = timeStamp;
-            const step = 32 * diff * tempo / 60000; // (60[sec] * 1000)[msec]
+            const step = 32 * diff * (tempo as number) / 60000; // (60[sec] * 1000)[msec]
     
             this.timer?.checkAndFire(timeStamp);
             const scroll = document.getElementById('scroll') as HTMLInputElement;
     
-            var nextBar = (16 + 32 * (this.pos - sequencer.curPos + 1) - 8);
+            var nextBar = (16 + 32 * (this.pos - sequencer.appState.curPos + 1) - 8);
             if (this.mario.x < 120) { // Mario still has to run
                 this.x += step;
                 // If this step crosses the bar
                 if (this.x >= nextBar) {
                     this.pos++;
-                    sequencer.scheduleAndPlay(sequencer.curScore.notes[this.pos - 2], 0); // Ignore diff
+                    sequencer.scheduleAndPlay(sequencer.appState.curScore.notes[this.pos - 2], 0); // Ignore diff
                     this._checkMarioShouldJump();
                 } else {
                     // 32 dots in t[sec/1beat]
@@ -107,20 +107,20 @@ export class Mario {
                         this.x = 120;
                     }
                 }
-            } else if (sequencer.curPos <= sequencer.curScore.end - 6) { // Scroll
+            } else if (sequencer.appState.curPos <= sequencer.appState.curScore.end - 6) { // Scroll
                 this.x = 120;
                 if (this.scroll < 16 && (this.scroll + step) > 16) {
                     this.pos++;
                     this.scroll += step;
-                    sequencer.scheduleAndPlay(sequencer.curScore.notes[this.pos - 2], 0); // Ignore error
+                    sequencer.scheduleAndPlay(sequencer.appState.curScore.notes[this.pos - 2], 0); // Ignore error
                     this._checkMarioShouldJump();
                 } else {
                     this.scroll += step;
                     if (this.scroll > 32) {
                         this.scroll -= 32;
-                        sequencer.curPos++;
-                        if (scroll) scroll.value = sequencer.curPos.toString();
-                        if (sequencer.curPos > (sequencer.curScore.end - 6)) {
+                        sequencer.appState.curPos++;
+                        if (scroll) scroll.value = sequencer.appState.curPos.toString();
+                        if (sequencer.appState.curPos > (sequencer.appState.curScore.end - 6)) {
                         this.x += this.scroll;
                         this.scroll = 0
                         }
@@ -131,11 +131,11 @@ export class Mario {
                 // If this step crosses the bar
                 if (this.x >= nextBar) {
                 this.pos++;
-                sequencer.scheduleAndPlay(sequencer.curScore.notes[this.pos - 2], 0); // Ignore diff
+                sequencer.scheduleAndPlay(sequencer.appState.curScore.notes[this.pos - 2], 0); // Ignore diff
                 this._checkMarioShouldJump();
                 }
             }
-            sequencer.drawScore(sequencer.curPos, sequencer.curScore.notes, this.scroll);
+            sequencer.drawScore(sequencer.appState.curPos, sequencer.appState.curScore.notes, this.scroll);
             this.draw();
         }
     }
@@ -176,7 +176,7 @@ export class Mario {
                 if (this.scroll > 32) {
                     this.x += this.scroll - 32;
                     this.scroll = 0;
-                    this.sequencer.curPos++;
+                    this.sequencer.appState.curPos++;
                 }
             } else
                 this.x = Math.floor(diff / 4) + this.offset;

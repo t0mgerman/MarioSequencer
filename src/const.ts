@@ -34,8 +34,26 @@ type MarioSequencerImageAsset =
 export interface IMarioSequencerAssets {
     BUTTONS: HTMLButtonElement[];
     SOUNDS: SoundEntity[];
+    /** Stores loaded spritesheets (unscaled) */
+    SPRITESHEETS?: {
+        Chars: HTMLImageElement;
+        Bomb: HTMLImageElement;
+        End: HTMLImageElement;
+        PlayBtn: HTMLImageElement;
+        Repeat: HTMLImageElement;
+        Semitone: HTMLImageElement;
+        Numbers: HTMLImageElement;
+        Stop: HTMLImageElement;
+        Beat: HTMLImageElement;
+        Song: HTMLImageElement;
+        ThumbSlider: HTMLImageElement;
+        ClearBtn: HTMLImageElement;
+        Mario: HTMLImageElement;
+        UndoDog: HTMLImageElement;
+    },
+    /** Stores scaled sprite frames */
     IMAGES?: {
-        CharSheet: HTMLImageElement[];
+        Tools: HTMLImageElement[];
         Bomb: HTMLImageElement[];
         GClef: HTMLImageElement;
         Numbers: HTMLImageElement[];
@@ -51,6 +69,7 @@ export interface IMarioSequencerAssets {
         EndMark: HTMLImageElement;
         Semitone: HTMLImageElement[];
         Repeat: HTMLImageElement[];
+        UndoDog: HTMLImageElement[];
     },
 }
 
@@ -62,7 +81,7 @@ export enum GameStatus {
 }
 
 export function getConstants(opts: any, container: HTMLElement): IMarioSequencerProps {
-    const MAGNIFY = opts.mag || opts.magnify || 2;
+    const MAGNIFY = opts.mag || opts.magnify || getScaledMagnify();
     const CHARSIZE = 16 * MAGNIFY;
     const HALFCHARSIZE = Math.floor(CHARSIZE / 2);
     const ORGHEIGHT = 224;
@@ -82,4 +101,10 @@ export function getConstants(opts: any, container: HTMLElement): IMarioSequencer
         OFFSETLEFT: container.offsetLeft,
         OFFSETTOP: container.offsetTop
     }
+}
+
+export function getScaledMagnify() {
+    const width = Math.floor(window.innerWidth / 256);
+    const height = Math.floor(window.innerHeight / 224);
+    return Math.min(width, height);
 }

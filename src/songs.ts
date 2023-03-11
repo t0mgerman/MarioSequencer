@@ -1,9 +1,9 @@
-type MarioSequencerSong = {
-    notes: number[][];
+export type MarioSequencerSong = {
+    notes: (string|number)[][];
     beats: number;
     loop: boolean;
     end: number;
-    tempo: string;
+    tempo: string | number;
 }
 
 type MarioSequencerSongCollection = {

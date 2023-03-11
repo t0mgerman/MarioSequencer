@@ -1,8 +1,11 @@
-import { GameStatus, getConstants, IMarioSequencerAssets, IMarioSequencerProps } from "./const";
+import { GameStatus, getConstants, getScaledMagnify, IMarioSequencerAssets, IMarioSequencerProps } from "./const";
 import { SoundEntity } from "./sound";
 import EasyTimer from "./timer";
-import { EmbeddedSongs } from "./songs";
+import { EmbeddedSongs, MarioSequencerSong } from "./songs";
 import { Mario } from "./mario";
+
+import styles from "./app.module.scss";
+import { showSpriteFrame } from "./utils";
 
 window.requestAnimFrame = (function(){
     return  window.requestAnimationFrame ||
@@ -15,34 +18,96 @@ window.requestAnimFrame = (function(){
         };
     })();;
 
+type MarioSequencerAppState = {
+    mouseX: number;
+    mouseY: number;
+    keyPresses: string[];
+
+    /** Last ID returned from requestAnimationFrame, can be used to cancel draw callbacks */
+    animeId: number;
+
+    /** Used to prevent animation during resize and redraw of canvas */
+    resizing: boolean;
+
+    /** Stores the Mario Paint composer tool currently selected (index / number) */
+    currentTool: number;
+
+    /** Stores the app's progress/position in relation to the musical score. Used in playback and in rendering the score to the screen. */
+    curPos: number;
+
+    /** When the user loads one of the embedded Mario Paint songs, this is a reference to the associated button in the UI */
+    selectedSongBtn?: HTMLButtonElement;
+
+    /** Stores the current music score state */
+    curScore: MarioSequencerSong;
+
+    /** Stores the music score history - needed for undoDog */
+    history: MarioSequencerAppState[];
+
+    gameStatus: GameStatus;
+}
+
 export class MarioSequencer {
 
+    /** Moustachioed plumber and hero of the Mushroom Kingdom */
     private _mario?: Mario;
-    private AC: AudioContext = (window.AudioContext) ? new AudioContext() : new window.webkitAudioContext();
-    private Layer1?: HTMLCanvasElement;
-    private Layer2?: HTMLCanvasElement;
-    private L1C: CanvasRenderingContext2D | null = null;
-    private L2C: CanvasRenderingContext2D | null = null;
-    private _container: HTMLElement;
-    private _pseudoSheet: CSSStyleSheet | null = null;
-    private _mouseX = 0;
-    private _mouseY = 0;
-    private _animeId = 0;
-    private _resizing = false;
 
-    private _urlOptions: Record<string,any> = {};
-    private _curChar = 0;
-    public curPos = 0;
-    private _curSong?: any;
-    public curScore: any = {};
-    private _curMaxBars: number;
-    private _gameStatus: GameStatus = GameStatus.Edit;
+    /** Web AudioContext, used for audio playback */
+    private AC: AudioContext = (window.AudioContext) ? new AudioContext() : new window.webkitAudioContext();
     
+    /** Layer 1 Canvas - for rendering of Mario Paint composer background / UI elements */
+    private Layer1?: HTMLCanvasElement;
+
+    /** Layer 2 Canvas - for rendering of Mario Paint composer score and mario etc */
+    private Layer2?: HTMLCanvasElement;
+
+    /** Layer 1 Rendering Context (2D) */
+    private L1C: CanvasRenderingContext2D | null = null;
+
+    /** Layer 2 Rendering Context (2D) */
+    private L2C: CanvasRenderingContext2D | null = null;
+
+    /** HTML Container for the app */
+    private _container: HTMLElement;
+
+    /** App state */
+    public appState: MarioSequencerAppState = {
+        mouseX: 0,
+        mouseY: 0,
+        keyPresses: [],
+        animeId: 0,
+        resizing: false,
+        currentTool: 0,
+        curPos: 0,
+        curScore: {
+            beats: 4,
+            end: 0,
+            loop: false,
+            notes: [],
+            tempo: "0"
+        },
+        history: [],
+        gameStatus: GameStatus.Edit
+    }
+
+    /** Stores any parameters/options passed to the app using the URL Query String */
+    private _urlOptions: Record<string,any> = {};
+
+    /** Maximum number of bars in score */
+    private _curMaxBars: number;
+
+    private _maxHistory: number = 10;
+    
+    /** App constants - updated on window resize */
     private CONST: IMarioSequencerProps;
+
+    /** Image assets, sound assets and button references */
     public ASSETS: IMarioSequencerAssets = {
         BUTTONS: [],
         SOUNDS: [],
     };
+
+    /** Timers used by the app to facilitate certain sprite animations */
     private TIMERS: Record<string, EasyTimer> = {};
 
     /**
@@ -51,6 +116,7 @@ export class MarioSequencer {
      */
     constructor(containerSelector: string) {
 
+        // Class fn bindings
         this._doAnimation = this._doAnimation.bind(this);
         this._doMarioEnter = this._doMarioEnter.bind(this);
         this._doMarioLeave = this._doMarioLeave.bind(this);
@@ -60,9 +126,12 @@ export class MarioSequencer {
         this._onMouseMove = this._onMouseMove.bind(this);
         this._readDroppedFiles = this._readDroppedFiles.bind(this);
 
-        const i = this._getImageElFromPath;
         const containerEl = document.querySelector(containerSelector) as HTMLElement;
         if (containerEl) {
+            const initialMagnify = getScaledMagnify();
+            containerEl.classList.add(styles.marioSequencer);
+            containerEl.style.setProperty('--scaledMagnify', initialMagnify.toString());
+
             // Get manual options from URL / Search String
             window.location.search.substr(1).split('&').forEach((s) => {
                 const tmp = s.split('=');
@@ -74,7 +143,17 @@ export class MarioSequencer {
             this._curMaxBars = this.CONST.DEFAULTMAXBARS;
             this._container = containerEl;
 
-            this.init();
+            this.init().then(() => {
+                window.addEventListener("resize", () => {
+                    const select = document.getElementById('magnify') as HTMLSelectElement;
+                    if (select) {
+                        const magIdx = select.selectedIndex + 1;
+                        this._resizeScreen(magIdx);
+                    }
+                });
+                // this._resizeScreen(4);
+            });
+
 
             const downloadBtn = document.querySelector('button#download');
             if (downloadBtn) {
@@ -86,16 +165,14 @@ export class MarioSequencer {
         }
     }
 
-    private async init() {
+    private async init(reInit?: boolean) {
         // Prepare drawing surfaces / layers
         await this._initLayers();
 
-        // Inject style tag to head to help with styling pseudo-elements
-        this._injectStyleTag();
-
         // Perform additional initialisation
-        this._loadSoundsAsync();
-        await this._initImageAssets();
+        if (!reInit) this._loadSoundsAsync();
+        await this._initImageAssets(reInit);
+
         this._initBomb();
         this._initInstrumentButtons();
         this._initEndMarkButton();
@@ -105,39 +182,48 @@ export class MarioSequencer {
         this._initScrollRange();
         this._initBeatButtons();
         this._initSongButtons();
+        this._initUndoDog();
         this._initEraserButton();
         this._initTempoRange();
         this._initClearButton();
-
-        this._initMusicScore();
-
         this._initMario();
+        
+        if (!reInit) {
+        
+            this._initMusicScore();
+            
+            const b = document.getElementById("magnify") as HTMLSelectElement;
+            b.addEventListener("change", (e) => {
+                let mag = (e.target as HTMLSelectElement).selectedIndex + 1;
+                this._resizeScreen(mag);
+            });
 
-        const b = document.getElementById("magnify") as HTMLSelectElement;
-        b.addEventListener("change", (e) => {
-            this._resizeScreen((e.target as HTMLSelectElement).selectedIndex + 1);
-        });
+            // Load all sounds in to respective buffers and
+            // Load any music passed in by URL params
+            Promise.all(this.ASSETS.SOUNDS.map((s) => s.load()))
+                .then((all) => {
+                    all.map((buffer, i) => {
+                        this.ASSETS.SOUNDS[i].buffer = buffer;
+                    });
 
-        // Load all sounds in to respective buffers and
-        // Load any music passed in by URL params
-        Promise.all(this.ASSETS.SOUNDS.map((s) => s.load()))
-            .then((all) => {
-                all.map((buffer, i) => {
-                    this.ASSETS.SOUNDS[i].buffer = buffer;
+                    // Remove loading 'spinner'
+                    const spinner = document.getElementById("spinner");
+                    if (spinner) {
+                        this._container.removeChild(spinner);
+                    }
+
+                    // Action any URL params
+                    this._actionUrlParams();
+
+                    this._initScreen();
+                    this._initKeyboardEventListeners();
+                    this._initMouseEvents();
                 });
 
-                // Remove loading 'spinner'
-                const spinner = document.getElementById("spinner");
-                if (spinner) {
-                    this._container.removeChild(spinner);
-                }
-
-                // Action any URL params
-                this._actionUrlParams();
-
-                this._initScreen();
-                this._initMouseEvents();
-            });
+        } 
+        // else {
+        //     this._reInitButtonsFromScore();
+        // }
     }
 
     private _initMouseEvents() {
@@ -161,7 +247,7 @@ export class MarioSequencer {
 
             if (OPTS['url'] != undefined) {
                 
-                this._fullInitScore();
+                this._resetScore();
                 const url = OPTS['url'];
                 
                 // Load url
@@ -223,7 +309,7 @@ export class MarioSequencer {
                             "END=" + end + "\n" +
                             "TIME44=" + ((beats == "T" || beats == "TRUE") ? "TRUE" : "FALSE");
             
-                sequencer._fullInitScore();
+                sequencer._resetScore();
                 sequencer._addMSQ(text);
                 sequencer._reInitButtonsFromScore();
 
@@ -236,12 +322,6 @@ export class MarioSequencer {
 
     //#region Initialisation 
 
-    private _injectStyleTag() {
-        const s = document.createElement("style");
-        document.head.appendChild(s);
-        this._pseudoSheet = s.sheet;
-    }
-
     private _loadSoundsAsync() {
         const SOUNDS = this.ASSETS.SOUNDS;
         for (let i = 1; i < 21; i++) {
@@ -253,150 +333,171 @@ export class MarioSequencer {
         }
     }
 
-    private async _initImageAssets() {
+    private async _loadSpritesheets() {
         const i = this._getImageElFromPath;
-        const charSheet = await i("image/character_sheet.png");
-        const bombSheet = await i("image/bomb.png");
-        const endMark = await i("image/end_mark.png");
-        const playBtnSheet = await i("image/play_button.png");
-        const repeatSheet = await i("image/repeat_head.png");
-        const semitoneSheet = await i("image/semitone.png");
-        const numbersSheet = await i("image/numbers.png");
-        const stopSheet = await i("image/stop_button.png");
-        const beatSheet = await i("image/beat_button.png");
-        const songSheet = await i("image/song_buttons.png");
-        const thumbSliderSheet = await i("image/slider_thumb.png");
-        const clearBtnSheet = await i("image/clear_button.png");
-        const marioSheet = await i("image/Mario.png");
-        const repeatMarks = this._sliceImage(repeatSheet, 13, 62);
-        this.ASSETS.IMAGES = {
-            CharSheet: this._sliceImage(charSheet, 16, 16),
-            Bomb: this._sliceImage(bombSheet, 14, 18),
-            GClef: await i("image/G_Clef.png"),
-            Numbers: this._sliceImage(numbersSheet, 5, 7),
-            Mario: this._sliceImage(marioSheet, 16, 22),
-            Sweat: await i("image/mario_sweat.png"),
-            PlayBtn: this._sliceImage(playBtnSheet, 12, 15),
-            StopBtn: this._sliceImage(stopSheet, 16, 15),
-            ClearBtn: this._sliceImage(clearBtnSheet, 34, 16),
-            ThumbSlider: this._sliceImage(thumbSliderSheet, 5, 8),
-            BeatBtn: this._sliceImage(beatSheet, 14, 15),
-            SongBtns: this._sliceImage(songSheet, 15, 17),
-            EndMarkBtn: this._sliceImage(endMark, 14, 13), // Note: Different size from the button,
-            EndMark: repeatMarks[2],
-            Semitone: this._sliceImage(semitoneSheet, 5, 12),
-            Repeat: repeatMarks
+        const Chars = await i("image/character_sheet.png");
+        const Bomb = await i("image/bomb.png");
+        const End = await i("image/end_mark.png");
+        const PlayBtn = await i("image/play_button.png");
+        const Repeat = await i("image/repeat_head.png");
+        const Semitone = await i("image/semitone.png");
+        const Numbers = await i("image/numbers.png");
+        const Stop = await i("image/stop_button.png");
+        const Beat = await i("image/beat_button.png");
+        const Song = await i("image/song_buttons.png");
+        const ThumbSlider = await i("image/slider_thumb.png");
+        const ClearBtn = await i("image/clear_button.png");
+        const Mario = await i("image/Mario.png");
+        const UndoDog = await i("image/undo_dog.png");
+        this.ASSETS.SPRITESHEETS = {
+            Chars,
+            Bomb,
+            End,
+            PlayBtn,
+            Repeat,
+            Semitone,
+            Numbers,
+            Stop,
+            Beat,
+            Song,
+            ThumbSlider,
+            ClearBtn,
+            Mario,
+            UndoDog
         };
+    }
+
+    private async _initImageAssets(skipLoading?: boolean) {
+        if (!skipLoading) {
+            await this._loadSpritesheets();
+        }
+        const { SPRITESHEETS: s } = this.ASSETS;
+        const i = this._getImageElFromPath;
+        if (s) {
+            const repeatMarks = this._sliceImage(s.Repeat, 13, 62);
+            this.ASSETS.IMAGES = {
+                Tools: this._sliceImage(s.Chars, 16, 16),
+                Bomb: this._sliceImage(s.Bomb, 14, 18),
+                GClef: await i("image/G_Clef.png"),
+                Numbers: this._sliceImage(s.Numbers, 5, 7),
+                Mario: this._sliceImage(s.Mario, 16, 22),
+                Sweat: await i("image/mario_sweat.png"),
+                PlayBtn: this._sliceImage(s.PlayBtn, 12, 15),
+                StopBtn: this._sliceImage(s.Stop, 16, 15),
+                ClearBtn: this._sliceImage(s.ClearBtn, 34, 16),
+                ThumbSlider: this._sliceImage(s.ThumbSlider, 5, 8),
+                BeatBtn: this._sliceImage(s.Beat, 14, 15),
+                SongBtns: this._sliceImage(s.Song, 15, 17),
+                EndMarkBtn: this._sliceImage(s.End, 14, 13), // Note: Different size from the button,
+                EndMark: repeatMarks[2],
+                Semitone: this._sliceImage(s.Semitone, 5, 12),
+                Repeat: repeatMarks,
+                UndoDog: this._sliceImage(s.UndoDog, 14, 15),
+            };
+        }
     }
 
     private _initPlayButton() {
         const { IMAGES } = this.ASSETS;
         if (IMAGES) {
-            const b = this._makeButton(55, 168, 12, 15);
-            b.id = 'play';
-            b.images = IMAGES.PlayBtn;
-            b.style.backgroundImage = "url(" + b.images[0].src + ")";
-            b.addEventListener("click", this._onPlayListener(this));
-            this._pseudoSheet?.insertRule('#play:focus {outline: none !important;}', 0);
-            this._container.appendChild(b);
+            const b = this._getOrCreateButton(55, 168, 12, 15, 'play', IMAGES.PlayBtn, this._onPlayListener(this), styles.playBtn);
+            b.setCurrentFrame(0);
         }
     }
 
     private _initStopButton() {
         const { IMAGES } = this.ASSETS;
         if (IMAGES) {
-            const b = this._makeButton(21, 168, 16, 15);
-            b.id = 'stop';
-            b.disabled = false;
-            // stopbtn image including loop button (next)
             const imgs = IMAGES.StopBtn;
-            b.images = [imgs[0], imgs[1]];
-            b.style.backgroundImage = "url(" + b.images[1].src + ")";
-            b.addEventListener("click", this._onStopListener(this));
-            if (this._pseudoSheet) this._pseudoSheet.insertRule('#stop:focus {outline: none !important;}', 0);
-            this._container.appendChild(b);
+            const b = this._getOrCreateButton(21, 168, 16, 15, 'stop', [imgs[0], imgs[1]], this._onStopListener(this), styles.stopBtn);
+            b.disabled = false;
+            b.setCurrentFrame(1);
         }
     }
 
     private _initLoopButton() {
+        const { appState } = this;
         const { IMAGES } = this.ASSETS;
         const sequencer = this;
         if (IMAGES) {
             const imgs = IMAGES.StopBtn;
-            const b = this._makeButton(85, 168, 16, 15);
-            b.id = 'loop';
-            b.images = [imgs[2], imgs[3]]; // made in Stop button (above)
-            b.style.backgroundImage = "url(" + b.images[0].src + ")";
-            this.curScore.loop = false;
-            b.addEventListener("click", function(e) {
-                let num;
-                if (sequencer.curScore.loop) {
-                sequencer.curScore.loop = false;
-                num = 0;
-                } else {
-                sequencer.curScore.loop = true;
-                num = 1;
+            const b = this._getOrCreateButton(85, 168, 16, 15, 'loop', [imgs[2], imgs[3]], function(e) {
+                let loop = true;
+                if (sequencer.appState.curScore.loop) {
+                    loop = false;
                 }
-                this.style.backgroundImage = "url(" + this.images[num].src + ")";
+                let num = loop ? 1 : 0;
+                sequencer.setState({
+                    ...appState,
+                    curScore: {
+                        ...appState.curScore,
+                        loop
+                    }
+                });
+                this.setCurrentFrame(num);
                 sequencer.ASSETS.SOUNDS[17].play(8);
-            });
+            }, styles.loopBtn);
+            b.setCurrentFrame(0);
+            this.appState.curScore.loop = false;
             b.reset = function () {
-                sequencer.curScore.loop = false;
-                this.style.backgroundImage = "url(" + this.images[0].src + ")";
+                sequencer.appState.curScore.loop = false;
+                this.setCurrentFrame(0);
             };
             b.set   = function () {
-                sequencer.curScore.loop = true;
-                this.style.backgroundImage = "url(" + this.images[1].src + ")";
+                sequencer.appState.curScore.loop = true;
+                this.setCurrentFrame(1);
             }
-            this._pseudoSheet?.insertRule('#loop:focus {outline: none !important;}', 0);
-            this._container.appendChild(b);
         }
     }
 
     private _initScrollRange() {
         const { MAGNIFY } = this.CONST;
         const sequencer = this;
-        const r = document.createElement('input') as HTMLInputElement;
-        r.id = 'scroll';
-        r.type = 'range';
-        r.value = "0";
-        r.max = (this._curMaxBars - 6).toString();
-        r.min = "0";
-        r.step = "1";
-        (r.style as any)['-webkit-appearance']='none';
-        (r.style as any)['border-radius'] = '0px';
-        (r.style as any)['background-color'] = '#F8F8F8';
-        (r.style as any)['box-shadow'] = 'inset 0 0 0 #000';
-        (r.style as any)['vertical-align'] = 'middle';
-        r.style.position = 'absolute';
-        r.style.margin = "0";
-        r.originalX = 191;
-        r.originalY = 159;
-        r.originalW = 50;
-        r.originalH = 7;
-        this._moveDOM(r, r.originalX, r.originalY);
-        this._resizeDOM(r, r.originalW, r.originalH);
-        r.redraw = () => {
+        let r = document.getElementById('scroll') as HTMLInputElement;
+        if (r === null) {
+            r = document.createElement('input');
+            r.id = 'scroll';
+            r.classList.add(styles.scoreScroll);
+            r.type = 'range';
+            r.value = "0";
+            r.max = (this._curMaxBars - 6).toString();
+            r.min = "0";
+            r.step = "0.2";
+            (r.style as any)['-webkit-appearance']='none';
+            (r.style as any)['border-radius'] = '0px';
+            (r.style as any)['background-color'] = '#F8F8F8';
+            (r.style as any)['box-shadow'] = 'inset 0 0 0 #000';
+            (r.style as any)['vertical-align'] = 'middle';
+            r.style.position = 'absolute';
+            r.style.margin = "0";
+            r.originalX = 191;
+            r.originalY = 159;
+            r.originalW = 50;
+            r.originalH = 7;
             this._moveDOM(r, r.originalX, r.originalY);
             this._resizeDOM(r, r.originalW, r.originalH);
-        };
-        r.addEventListener("input", function(e) {
-            sequencer.curPos = parseInt(this.value);
-        });
-        this._container.appendChild(r);
-
-        // It's very hard to set values to a pseudo element with JS.
-        // http://pankajparashar.com/posts/modify-pseudo-elements-css/
-        this._pseudoSheet?.insertRule('#scroll::-webkit-slider-thumb {' +
-            "-webkit-appearance: none !important;" +
-            "border-radius: 0px;" +
-            "background-color: #A870D0;" +
-            "box-shadow:inset 0 0 0px;" +
-            "border: 0px;" +
-            "width: " + 5 * MAGNIFY + "px;" +
-            "height:" + 7 * MAGNIFY + "px;}", 0
-        );
-        this._pseudoSheet?.insertRule('#scroll:focus {outline: none !important;}', 0);
+            r.redraw = () => {
+                this._moveDOM(r, r.originalX, r.originalY);
+                this._resizeDOM(r, r.originalW, r.originalH);
+            };
+            r.addEventListener("input", function(e) {
+                sequencer.appState.curPos = parseInt(this.value);
+            });
+            if (this.Layer2) {
+                this.Layer2.addEventListener("wheel", (e) => {
+                    if (e.deltaY < 0) {
+                        r.valueAsNumber += 0.2;
+                    } else {
+                        r.valueAsNumber -= 0.2;
+                    }
+                    let event = new Event('input', {bubbles: true, cancelable: true});
+                    r.dispatchEvent(event);
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+            }
+            this._container.appendChild(r);
+        }
     }
 
     private _initBeatButtons() {
@@ -404,26 +505,29 @@ export class MarioSequencer {
         const sequencer = this;
         if (IMAGES) {
             const imgs = IMAGES.BeatBtn;
-            const b1 = this._makeButton(81, 203, 14, 15);
-            b1.id = '3beats';
+            const b1 = this._getOrCreateButton(81, 203, 14, 15, '3beats', [imgs[0], imgs[1]]) as BeatButtonElement;
             b1.beats = 3;
-            b1.images = [imgs[0], imgs[1]];
-            b1.style.backgroundImage = "url(" + b1.images[0].src + ")";
+            b1.setCurrentFrame(0);
             b1.disabled = false;
-            this._container.appendChild(b1);
             
-            const b2 = this._makeButton(96, 203, 14, 15);
-            b2.id = '4beats';
+            const b2 = this._getOrCreateButton(96, 203, 14, 15, '4beats', [imgs[2], imgs[3]]) as BeatButtonElement;
             b2.beats = 4;
-            b2.images = [imgs[2], imgs[3]];
-            b2.style.backgroundImage = "url(" + b2.images[1].src + ")";
+            b2.setCurrentFrame(1);
             b2.disabled = true;
-            this._container.appendChild(b2);
             
-            const func = function(self: HTMLButtonElement) {sequencer.curScore.beats = self.beats};
+            const func = function(self: HTMLButtonElement) {
+                const { appState } = sequencer;
+                sequencer.setState({
+                    ...appState,
+                    curScore: {
+                        ...appState.curScore,
+                        beats: (self as BeatButtonElement).beats
+                    }
+                });
+            };
             
-            b1.addEventListener("click", this._makeExclusiveFunction([b1, b2], 0, func));
-            b2.addEventListener("click", this._makeExclusiveFunction([b1, b2], 1, func));
+            b2.addEventListener("click", this._createChoiceGroupFunction([b1, b2], 1, func));
+            b1.addEventListener("click", this._createChoiceGroupFunction([b1, b2], 0, func));
         }
     }
 
@@ -432,32 +536,88 @@ export class MarioSequencer {
         const sequencer = this;
         if (IMAGES) {
             const imgs = IMAGES.SongBtns;
-            const b = ['frog','beak','1up'].map(function (id, idx) {
-                const b = sequencer._makeButton(136 + 24 * idx, 202, 15, 17);
+
+            // Create buttons
+            const songButtons = ['frog','beak','1up'].map(function (id, idx) {
+                const b = sequencer._getOrCreateButton(136 + 24 * idx, 202, 15, 17, id, imgs.slice(idx * 3, idx * 3 + 3));
                 b.id = id;
                 b.num = idx;
-                b.images = imgs.slice(idx * 3, idx * 3 + 3);
-                b.style.backgroundImage = "url(" + b.images[0].src + ")";
+                b.setCurrentFrame(0);
                 b.disabled = false;
-                sequencer._container.appendChild(b);
                 return b;
             });
-            const func = function (self: HTMLButtonElement) {
-                sequencer.curScore = sequencer._clone(EmbeddedSongs[self.num]);
+
+            // Callback function that loads an appropriate embedded song in to memory and reinitialises various properties
+            const callbackFunc = function (self: HTMLButtonElement) {
+                const { appState } = sequencer;
+                const curScore: MarioSequencerSong = sequencer._clone(EmbeddedSongs[self.num]);
                 const tempoEl = document.getElementById("tempo") as HTMLInputElement;
-                if (tempoEl) tempoEl.value = sequencer.curScore.tempo;
+                if (tempoEl) tempoEl.value = curScore.tempo.toString();
                 const b = document.getElementById("loop") as HTMLButtonElement;
-                if (sequencer.curScore.loop) b.set(); else b.reset();
+                if (curScore.loop) b.set(); else b.reset();
                 const s = document.getElementById("scroll") as HTMLInputElement;
-                s.max = (sequencer.curScore.end - 5).toString();
+                s.max = (curScore.end - 5).toString();
                 s.value = "0";
-                sequencer.curPos = 0;
-                sequencer._curSong = self;
-                sequencer.drawScore(sequencer.curPos, sequencer.curScore['notes'], 0);
+                
+                sequencer.setState({
+                    curScore,
+                    curPos: 0,
+                    selectedSongBtn: self,
+                });
+                sequencer.drawScore(sequencer.appState.curPos, sequencer.appState.curScore['notes'], 0);
             };
-            b[0].addEventListener("click", this._makeExclusiveFunction(b, 0, func));
-            b[1].addEventListener("click", this._makeExclusiveFunction(b, 1, func));
-            b[2].addEventListener("click", this._makeExclusiveFunction(b, 2, func));
+
+            // Attach choice group event handler to each song button
+            songButtons.forEach((btn, idx) => {
+                songButtons[idx].addEventListener("click", this._createChoiceGroupFunction(songButtons, idx, callbackFunc));
+            });
+        }
+    }
+
+    private _initUndoDog() {
+        const { IMAGES } = this.ASSETS;
+        const sequencer = this;
+        if (IMAGES) {
+            const b = this._getOrCreateButton(216, 203, 14, 15, 'undoDog', IMAGES.UndoDog, async function () {
+                if (sequencer.appState.gameStatus === GameStatus.Edit) {
+                    sequencer.ASSETS.SOUNDS[18].play(8);
+                    const frame = showSpriteFrame(this, 150);
+                    await frame(1);
+                    await frame(0);
+    
+                    const previousState = sequencer.appState.history.pop();
+                    let changeCursor = previousState && sequencer.appState.currentTool !== previousState.currentTool;
+                    let changeSongBtn = previousState && previousState.selectedSongBtn !== sequencer.appState.selectedSongBtn;
+                    let changeBeat = previousState && previousState.curScore.beats !== sequencer.appState.curScore.beats;
+                    if (previousState) {
+                        sequencer.appState = previousState;
+                    } 
+                    if (changeCursor) {
+                        sequencer._changeCursor(sequencer.appState.currentTool);
+                    }
+                    if (changeSongBtn) {
+                        ['frog','beak','1up'].forEach(function (id, idx) {
+                            const b = document.getElementById(id) as HTMLButtonElement;
+                            b.setCurrentFrame(0);
+                            b.disabled = false;
+                        });
+                        if (sequencer.appState.selectedSongBtn) {
+                            sequencer.appState.selectedSongBtn.setCurrentFrame(1);
+                            sequencer.appState.selectedSongBtn.disabled = true;
+                        }
+                    }
+                    if (changeBeat) {
+                        ['3beats', '4beats'].forEach(function (id, idx) {
+                            const b = document.getElementById(id) as BeatButtonElement;
+                            const isSelected = b.beats === sequencer.appState.curScore.beats; 
+                            b.setCurrentFrame(isSelected ? 1 : 0);
+                            b.disabled = isSelected;
+                        })
+                    }
+                    sequencer.drawScore(sequencer.appState.curPos, sequencer.appState.curScore.notes, sequencer.appState.curPos);
+                }
+            });
+            b.setCurrentFrame(0);
         }
     }
 
@@ -466,117 +626,109 @@ export class MarioSequencer {
         const sequencer = this;
         if (IMAGES) {
             const imgs = IMAGES.SongBtns;
-            const b = this._makeButton(40, 202, 15, 17);
-            b.id = 'eraser';
-            b.images = [imgs[9], imgs[10], imgs[11]]; // In the Song button images
-            b.style.backgroundImage = "url(" + b.images[0].src + ")";
+            const b = this._getOrCreateButton(40, 202, 15, 17, 'eraser', [imgs[9], imgs[10], imgs[11]], function() {
+                sequencer.TIMERS.eraser.switch = true;
+                sequencer.setState({currentTool: 16});
+                sequencer.ASSETS.SOUNDS[17].play(8);
+                sequencer._drawEraserIcon();
+                sequencer._clearSongButtons();
+                this.setCurrentFrame(1);
+                if (sequencer.Layer2) sequencer.Layer2.style.cursor = 'url(' + this.images[2].src + ')' + ' 0 0, auto';
+            });
+            b.setCurrentFrame(0);
             this.TIMERS.eraser = new EasyTimer(200, function () {
                 // If current is not end mark, just return;
-                if (sequencer._curChar != 16) {
+                if (sequencer.appState.currentTool != 16) {
                 this.switch = false;
                 return;
                 }
                 this.currentFrame = (this.currentFrame == 0) ? 1 : 0;
             });
             this.TIMERS.eraser.currentFrame = 0;
-            b.addEventListener("click", function() {
-                sequencer.TIMERS.eraser.switch = true;
-                sequencer._curChar = 16;
-                sequencer.ASSETS.SOUNDS[17].play(8);
-                sequencer._drawEraserIcon();
-                sequencer._clearSongButtons();
-                this.style.backgroundImage = "url(" + this.images[1].src + ")";
-                if (sequencer.Layer2) sequencer.Layer2.style.cursor = 'url(' + this.images[2].src + ')' + ' 0 0, auto';
-            });
-            this._container.appendChild(b);
         }
     }
 
     private _initTempoRange() {
-        const { MAGNIFY } = this.CONST;
         const { IMAGES } = this.ASSETS;
         const sequencer = this;
         if (IMAGES) {
+            const setThumbImage = (range: HTMLInputElement) => {
+                const t = IMAGES.ThumbSlider[0];
+                range.image = t;
+                const seqEl = document.querySelector(`.${styles.marioSequencer}`) as HTMLElement;
+                if (seqEl) {
+                    seqEl.style.setProperty('--tempoThumbImg', `url('${t.src}')`);
+                }
+            };
 
-            const r = document.createElement('input');
-            r.id = "tempo";
-            r.type = "range";
-            r.value = "525";
-            r.max = "1000";
-            r.min = "50";
-            r.step = "1";
-            (r.style as any)['-webkit-appearance']='none';
-            (r.style as any)['border-radius'] = '0px';
-            (r.style as any)['background-color'] = 'rgba(0, 0, 0, 0.0)';
-            (r.style as any)['box-shadow'] = 'inset 0 0 0 #000';
-            (r.style as any)['vertical-align'] = 'middle';
-            r.style.position = "absolute";
-            r.style.margin = "0";
-            r.originalX = 116;
-            r.originalY = 172;
-            r.originalW = 40;
-            r.originalH = 8;
-            this._moveDOM(r, r.originalX, r.originalY);
-            this._resizeDOM(r, r.originalW, r.originalH);
-            r.redraw = () => {
+            let r = document.getElementById('tempo') as HTMLInputElement;
+            if (r === null) {
+                r = document.createElement('input');
+                r.id = "tempo";
+                r.classList.add(styles.tempo);
+                r.type = "range";
+                r.value = "525";
+                r.max = "1000";
+                r.min = "50";
+                r.step = "1";
+                (r.style as any)['-webkit-appearance']='none';
+                (r.style as any)['border-radius'] = '0px';
+                (r.style as any)['background-color'] = 'rgba(0, 0, 0, 0.0)';
+                (r.style as any)['box-shadow'] = 'inset 0 0 0 #000';
+                (r.style as any)['vertical-align'] = 'middle';
+                r.style.position = "absolute";
+                r.style.margin = "0";
+                r.originalX = 116;
+                r.originalY = 172;
+                r.originalW = 40;
+                r.originalH = 8;
                 this._moveDOM(r, r.originalX, r.originalY);
                 this._resizeDOM(r, r.originalW, r.originalH);
-            };
-            r.addEventListener("input", function(e) {
-                sequencer.curScore.tempo = parseInt(this.value);
-            });
-            this._container.appendChild(r);
-    
-            const t = IMAGES.ThumbSlider[0];
-            r.image = t;
-            // It's very hard to set values to a pseudo element with JS.
-            // http://pankajparashar.com/posts/modify-pseudo-elements-css/
-            this._pseudoSheet?.insertRule('#tempo::-webkit-slider-thumb {' +
-                "-webkit-appearance: none !important;" +
-                "background-image: url('" + t.src + "');" +
-                "background-repeat: no-repeat;" +
-                "background-size: 100% 100%;" +
-                "border: 0px;" +
-                "width: " + 5 * MAGNIFY + "px;" +
-                "height:" + 8 * MAGNIFY + 'px;}', 0
-            );
-            this._pseudoSheet?.insertRule('#tempo:focus {outline: none !important;}', 0);
+                r.redraw = () => {
+                    this._moveDOM(r, r.originalX, r.originalY);
+                    this._resizeDOM(r, r.originalW, r.originalH);
+                    setThumbImage(r);
+                };
+                r.addEventListener("input", function(e) {
+                    sequencer.appState.curScore.tempo = parseInt(this.value);
+                });
+                r.addEventListener("mouseup", function(e) {
+                    const { appState } = sequencer;
+                    sequencer.setState({
+                        curScore: {
+                            ...appState.curScore,
+                            tempo: parseInt(this.value)
+                        }
+                    });
+                })
+                this._container.appendChild(r);
+                setThumbImage(r);
+            }
     
             // Prepare range's side buttons for inc/decrements
-            const bLeft = this._makeButton(184, 158, 7, 9);
-            bLeft.id = 'toLeft';
-            bLeft.addEventListener("click", function (e) {
+            const bLeft = this._getOrCreateButton(184, 158, 7, 9, 'toLeft', [], function (e) {
                 const r = document.getElementById('scroll') as HTMLInputElement;
                 let val = parseInt(r.value, 10);
                 if (val > 0) {
-                    sequencer.curPos = --val;
+                    sequencer.appState.curPos = --val;
                 }
             });
-            this._container.appendChild(bLeft);
     
-            const bRight = this._makeButton(241, 158, 7, 9);
-            bRight.id = 'toRight';
-            bRight.addEventListener("click", function (e) {
+            const bRight = this._getOrCreateButton(241, 158, 7, 9, 'toRight', [], function (e) {
                 const r = document.getElementById('scroll') as HTMLInputElement;
                 let val = parseInt(r.value, 10);
                 if (val < sequencer._curMaxBars - 6) {
-                    sequencer.curPos = ++val;
+                    sequencer.appState.curPos = ++val;
                 }
             });
-            this._container.appendChild(bRight);
         }
     }
 
     private _initClearButton() {
         const { IMAGES } = this.ASSETS;
         if (IMAGES) {
-            const b = this._makeButton(200, 176, 34, 16);
-            b.id = 'clear';
-            b.images = IMAGES.ClearBtn;
-            b.style.backgroundImage = "url(" + b.images[0].src + ")";
-            b.addEventListener("click", this._onClearListener(this));
-            this._container.appendChild(b);
-            this._pseudoSheet?.insertRule('#clear:focus {outline: none !important;}', 0);
+            const b = this._getOrCreateButton(200, 176, 34, 16, 'clear', IMAGES.ClearBtn, this._onClearListener(this), styles.clearBtn);
+            b.setCurrentFrame(0);
         }
     }
 
@@ -600,9 +752,9 @@ export class MarioSequencer {
                     case 2:
                         break;
                 }
-                if (sequencer._curSong == undefined || sequencer._gameStatus != GameStatus.Playing) return;
-                sequencer._curSong.style.backgroundImage =
-                    "url(" + sequencer._curSong.images[this.currentFrame + 1].src + ")";
+                if (sequencer.appState.selectedSongBtn == undefined || sequencer.appState.gameStatus != GameStatus.Playing) return;
+                sequencer.appState.selectedSongBtn.style.backgroundImage =
+                    "url(" + sequencer.appState.selectedSongBtn.images[this.currentFrame + 1].src + ")";
             });
             this.TIMERS.bomb.switch = true; // always true for the bomb
             this.TIMERS.bomb.currentFrame = 0;
@@ -617,20 +769,20 @@ export class MarioSequencer {
             //   1st mario:   x=24, y=8, width=13, height=14
             //   2nd Kinopio: X=38, y=8, width=13, height=14
             //   and so on...
-            const bimgs = IMAGES.CharSheet;
+            const bimgs = IMAGES.Tools;
             for (let i = 0; i < 15; i++) {
-                const b = this._makeButton((24 + 14 * i), 8, 13, 14);
-                b.num = i;
-                b.se = SOUNDS[i];
-                b.se.image = bimgs[i];
-                b.addEventListener("click", () => {
+                const b = this._getOrCreateButton((24 + 14 * i), 8, 13, 14, 'instr_' + i, [bimgs[i]], () => {
                     b.se.play(8); // Note F
-                    this._curChar = b.num;
+                    this.setState({
+                        currentTool: b.num
+                    });
                     this._clearEraserButton();
                     this._changeCursor(b.num);
                     this._drawCurChar(b.se.image);
                 });
-                this._container.appendChild(b);
+                b.num = i;
+                b.se = SOUNDS[i];
+                b.se.image = bimgs[i];
                 BUTTONS[i] = b;
             }
         }
@@ -665,18 +817,20 @@ export class MarioSequencer {
         // Store drawing context(s)
         this.L1C = this.Layer1.getContext('2d');
         this.L2C = this.Layer2.getContext('2d');
-        if (this.L1C) this.L1C.imageSmoothingEnabled = false;
-        if (this.L2C) this.L2C.imageSmoothingEnabled = false;
-
+        
         // Draw background
         this.Layer1.width = ORGWIDTH * MAGNIFY;
         this.Layer1.height = ORGHEIGHT * MAGNIFY;
         this.Layer2.width = ORGWIDTH * MAGNIFY;
         this.Layer2.height = SCRHEIGHT * MAGNIFY;
+        if (this.L1C) this.L1C.imageSmoothingEnabled = false;
+        if (this.L2C) this.L2C.imageSmoothingEnabled = false;
+
         const bg = await i("image/mat.png");
         if (this.L1C) this.L1C.drawImage(bg, 0, 0, bg.width * MAGNIFY, bg.height * MAGNIFY);
         // bg.onload = () => {
-        // }
+            // }
+            
     }
 
     private _initEndMarkButton() {
@@ -684,40 +838,44 @@ export class MarioSequencer {
         const { IMAGES } = this.ASSETS;
         if (IMAGES) {
             const sequencer = this;
-            const b = this._makeButton(235, 8, 13, 14);
-            b.images = IMAGES.EndMarkBtn;
-            this.TIMERS.endMark = new EasyTimer(150, function () {
-                // If current is not end mark, just return;
-                if (sequencer._curChar != 15) {
-                    this.switch = false;
-                    return;
-                }
-                this.currentFrame = (this.currentFrame == 0) ? 1 : 0;
-                if (sequencer.Layer2) sequencer.Layer2.style.cursor = 'url(' + this.images[this.currentFrame].src + ')' +
-                7 * MAGNIFY +' '+ 7 * MAGNIFY + ', auto';
-            }, b.images);
-            b.addEventListener("click", () => {
+            const b = this._getOrCreateButton(235, 8, 13, 14, 'endmark', IMAGES.EndMarkBtn, () => {
                 this.TIMERS.endMark.switch = true;
-                this._curChar = 15;
+                this.setState({
+                    currentTool: 15
+                });
                 this.ASSETS.SOUNDS[15].play(8);
                 this._clearEraserButton();
                 this._drawEndMarkIcon(b.images[0]);
             });
-            this._container.appendChild(b);
+            b.images = IMAGES.EndMarkBtn;
+            
+            // Setup flashing end-bar cursor that displays when end mark button is selected
+            this.TIMERS.endMark = new EasyTimer(150, function () {
+                // If current instrument/selected-button is not end mark, just return;
+                if (sequencer.appState.currentTool != 15) {
+                    this.switch = false;
+                    return;
+                }
+                // alternate frames
+                this.currentFrame = (this.currentFrame == 0) ? 1 : 0;
+                if (sequencer.Layer2) sequencer.Layer2.style.cursor = 'url(' + this.images[this.currentFrame].src + ')' +
+                7 * MAGNIFY +' '+ 7 * MAGNIFY + ', auto';
+            }, b.images);
+
             this.ASSETS.BUTTONS[15] = b;
         }
     }
 
     private _initScreen() {
         const { SOUNDS } = this.ASSETS;
-        this.curPos = 0;
-        this._curChar = 0;
-        const img = SOUNDS[this._curChar].image;
+        this.appState.curPos = 0;
+        this.appState.currentTool = 0;
+        const img = SOUNDS[this.appState.currentTool].image;
         if (img) {
             this._drawCurChar(img);
         }
-        this._changeCursor(this._curChar);
-        this.drawScore(this.curPos, this.curScore['notes'], 0);
+        this._changeCursor(this.appState.currentTool);
+        this.drawScore(this.appState.curPos, this.appState.curScore['notes'], 0);
         window.requestAnimFrame(this._doAnimation);
     }
 
@@ -725,23 +883,44 @@ export class MarioSequencer {
         this._mario = new Mario(this);
     }
 
-    private _makeExclusiveFunction(doms: HTMLButtonElement[], num: number, success: (el: HTMLButtonElement) => void) {
+    /**
+     * Utility function used to ensure that a group of buttons can behave like a choice-group or radio-button selection. 
+     * When one button is clicked, that button will be disabled and others in the group will be made active. This ensures
+     * only one button can be 'selected'.
+     * @param buttons An array of buttons that are to behave as a single choice-group
+     * @param num The index of the button to which an event handler is being added
+     * @param callbackFn The callback function that should execute once button states have been adjusted
+     * @returns 
+     */
+    private _createChoiceGroupFunction(buttons: HTMLButtonElement[], num: number, callbackFn: (el: (HTMLButtonElement|BeatButtonElement)) => void) {
         const sequencer = this;
-        const clone = doms.slice(0); // Clone the Array
-        const self = clone[num];
-        clone.splice(num, 1); // Remove No.i element
-        const theOthers = clone;
 
+        // Clone the button Array and store reference to the clicked button
+        const clone = buttons.slice(0); 
+        const self = clone[num];
+
+        // Store a reference to other buttons in the choice group
+        clone.splice(num, 1); 
+        const otherButtons = clone;
+
+        // When clicked
         return function(this: HTMLButtonElement, e: MouseEvent) {
-            // Sound Off for file loading
+            
+            // Play click sound
             if (!(e as any).soundOff) sequencer.ASSETS.SOUNDS[17].play(8);
+            
+            // Choice / Option is now selected, so set image and disable button
             this.disabled = true;
-            this.style.backgroundImage = "url(" + this.images[1].src + ")";
-            theOthers.map(function (x) {
+            this.setCurrentFrame(1);
+
+            // Enable other buttons in group
+            otherButtons.map(function (x) {
                 x.disabled = false;
-                x.style.backgroundImage = "url(" + x.images[0].src + ")";
+                x.setCurrentFrame(0);
             });
-            success(self);
+
+            // Execute callback function
+            callbackFn(self);
         };
     }
 
@@ -754,6 +933,7 @@ export class MarioSequencer {
             this.style.backgroundImage = "url(" + this.images[1].src + ")";
             sequencer.ASSETS.SOUNDS[17].play(8);
             const b = document.getElementById("stop") as HTMLButtonElement;
+            if (!b) console.log('no stop!');
             b.style.backgroundImage = "url(" + b.images[0].src + ")";
             b.disabled = false;
             this.disabled = true; // Would be unlocked by stop button
@@ -763,8 +943,8 @@ export class MarioSequencer {
                     (document.getElementById(id) as HTMLButtonElement).disabled = true;
                 });
 
-            sequencer._gameStatus = GameStatus.MarioEntering; // Mario Entering the stage
-            sequencer.curPos = 0;     // doAnimation will draw POS 0 and stop
+            sequencer.appState.gameStatus = GameStatus.MarioEntering; // Mario Entering the stage
+            sequencer.appState.curPos = 0;     // doAnimation will draw POS 0 and stop
             sequencer._mario?.init();
             window.requestAnimFrame(sequencer._doMarioEnter);
         };
@@ -780,51 +960,39 @@ export class MarioSequencer {
             //b.disabled = false; // Do after Mario left the stage
             this.disabled = true; // Would be unlocked by play button
 
-            sequencer._gameStatus = GameStatus.MarioLeaving; // Mario leaves from the stage
+            sequencer.appState.gameStatus = GameStatus.MarioLeaving; // Mario leaves from the stage
             sequencer._mario?.init4leaving();
-            if (sequencer._animeId != 0) cancelAnimationFrame(sequencer._animeId);
+            if (sequencer.appState.animeId != 0) cancelAnimationFrame(sequencer.appState.animeId);
             window.requestAnimFrame(sequencer._doMarioLeave);
         }
     }
 
     private _onClearListener(sequencer: MarioSequencer) {
-        return function (this: HTMLButtonElement, e: MouseEvent) {
+        return async function (this: HTMLButtonElement, e: MouseEvent) {
             this.style.backgroundImage = "url(" + this.images[1].src + ")";
             sequencer.ASSETS.SOUNDS[19].play(8);
             const btn = this;
-            function makePromise(num: number) {
-                return new Promise<void>(function (resolve, reject) {
-                    setTimeout(function() {
-                        btn.style.backgroundImage = "url(" + btn.images[num].src + ")";
-                        resolve()
-                    }, 150);
-                });
-            }
-
-            makePromise(2).then(function () {
-                return makePromise(1);
-            }).then(function () {
-                return makePromise(0);
-            }).then(function () {
-                sequencer._initMusicScore();
-                sequencer.curPos = 0;
-            });
-
+            const frame = showSpriteFrame(btn, 150);
+            await frame(2);
+            await frame(1);
+            await frame(0);
+            sequencer._initMusicScore();
+            sequencer.appState.curPos = 0;
             sequencer._clearSongButtons();
         }
     }
 
     /**
-     * Initialises score when file loaded
+     * Resets music score
      */
-    private _fullInitScore() {
-        this.curScore.notes = [];
+    private _resetScore() {
+        this.appState.curScore.notes = [];
         this._curMaxBars = 0;
-        this.curScore.beats = 4;
+        this.appState.curScore.beats = 4;
         // Loop button itself has a state, so keep current value;
         // CurScore.loop = false;
-        this.curScore.end = 0;
-        this.curScore.tempo = 0;
+        this.appState.curScore.end = 0;
+        this.appState.curScore.tempo = 0;
     }
 
     /**
@@ -834,18 +1002,18 @@ export class MarioSequencer {
         const { DEFAULTMAXBARS, DEFAULTTEMPO} = this.CONST;
         const tmpa = [];
         for (let i = 0; i < DEFAULTMAXBARS; i++) tmpa[i] = [];
-        this.curScore.notes = tmpa;
+        this.appState.curScore.notes = tmpa;
         this._curMaxBars = DEFAULTMAXBARS;
         const s = document.getElementById("scroll") as HTMLInputElement;
         s.max = (DEFAULTMAXBARS - 6).toString();
         s.value = "0";
-        this.curScore.loop = false;
+        this.appState.curScore.loop = false;
         (document.getElementById("loop") as HTMLButtonElement)?.reset();
-        this.curScore.end = DEFAULTMAXBARS - 1;
-        this.curScore.tempo = DEFAULTTEMPO;
+        this.appState.curScore.end = DEFAULTMAXBARS - 1;
+        this.appState.curScore.tempo = DEFAULTTEMPO;
         const tempoInput = document.getElementById("tempo") as HTMLInputElement;
         if (tempoInput) tempoInput.value = DEFAULTTEMPO.toString();
-        this.curScore.beats = 4;
+        this.appState.curScore.beats = 4;
         const e = new Event("click");
         (e as any).soundOff = true;
         const beatBtn = document.getElementById("4beats") as HTMLButtonElement;
@@ -853,22 +1021,22 @@ export class MarioSequencer {
     }
 
     private _reInitButtonsFromScore() {
-        const b = document.getElementById(this.curScore.beats == 3 ? '3beats' : '4beats') as HTMLButtonElement;
+        const b = document.getElementById(this.appState.curScore.beats == 3 ? '3beats' : '4beats') as HTMLButtonElement;
         const e = new Event("click");
         (e as any).soundOff = true;
         b.dispatchEvent(e);
 
         const r = document.getElementById('scroll') as HTMLInputElement;
-        this._curMaxBars = this.curScore.end + 1;
+        this._curMaxBars = this.appState.curScore.end + 1;
         r.max = (this._curMaxBars - 6).toString();
         r.value = "0";
-        this.curPos = 0;
+        this.appState.curPos = 0;
 
         const tempoRange = document.getElementById("tempo") as HTMLInputElement;
-        let tempo = this.curScore.notes[0][0];
+        let tempo = this.appState.curScore.notes[0][0];
         if (typeof tempo == "string" && tempo.substr(0, 5) == "TEMPO") {
             tempo = tempo.split("=")[1];
-            this.curScore.tempo = tempo;
+            this.appState.curScore.tempo = tempo;
             tempoRange.value = tempo;
         }
     }
@@ -888,9 +1056,9 @@ export class MarioSequencer {
             values[k] = v;
         });
 
-        const oldEnd = this.curScore.end;
+        const oldEnd = this.appState.curScore.end;
         const s = values.SCORE;
-        let i = 0, count = this.curScore.end;
+        let i = 0, count = this.appState.curScore.end;
         // MSQ format is variable length string.
         out:
         while (i < s.length) {
@@ -905,15 +1073,15 @@ export class MarioSequencer {
                 bar.push(note);
             }
             }
-            this.curScore.notes[count++] = bar;
+            this.appState.curScore.notes[count++] = bar;
         }
 
-        this.curScore.end  += parseInt(values.END) - 1;
-        if (this.curScore.tempo != values.TEMPO)
-            this.curScore.notes[oldEnd].splice(0, 0, "TEMPO=" + values.TEMPO);
-        this.curScore.tempo = values.TEMPO;
+        this.appState.curScore.end  += parseInt(values.END) - 1;
+        if (this.appState.curScore.tempo != values.TEMPO)
+            this.appState.curScore.notes[oldEnd].splice(0, 0, "TEMPO=" + values.TEMPO);
+        this.appState.curScore.tempo = values.TEMPO;
         const beats = (values.TIME44 == "TRUE") ? 4 : 3;
-        this.curScore.beats = beats;
+        this.appState.curScore.beats = beats;
         // click listener will set CurScore.loop
         const b = document.getElementById("loop") as HTMLButtonElement;
         (values.LOOP == "TRUE") ? b.set() : b.reset();
@@ -922,21 +1090,28 @@ export class MarioSequencer {
     private _addJSON(text: string) {
         const json = JSON.parse(text);
         for (let i = 0; i < json.end; i++)
-            this.curScore.notes.push(json.notes[i]);
+            this.appState.curScore.notes.push(json.notes[i]);
 
-        const notes = this.curScore.notes[this.curScore.end];
-        if (this.curScore.tempo != json.tempo && notes.length != 0) {
+        const notes = this.appState.curScore.notes[this.appState.curScore.end];
+        if (this.appState.curScore.tempo != json.tempo && notes.length != 0) {
             const tempostr = notes[0];
             if (typeof tempostr != "string") {
                 notes.splice(0, 0, "TEMPO=" + json.tempo);
             }
         }
-        this.curScore.tempo = json.tempo;
+        this.appState.curScore.tempo = json.tempo;
 
-        this.curScore.end += json.end;
+        this.appState.curScore.end += json.end;
 
         const b = document.getElementById("loop") as HTMLButtonElement;
-        if (this.curScore.loop) b.set; else b.reset();
+        if (this.appState.curScore.loop) b.set; else b.reset();
+    }
+
+    private _updateHistory() {
+        this.appState.history.push({...this.appState});
+        if (this.appState.history.length > this._maxHistory) {
+            this.appState.history = this.appState.history.slice(0 - this._maxHistory);
+        }
     }
 
     //#endregion
@@ -944,10 +1119,16 @@ export class MarioSequencer {
     //#region mouse event listeners 
 
     private _onMouse(e: MouseEvent) {
+        
+        e.preventDefault();
+        if (e.type === "contextmenu") {
+            document.getElementById('undoDog')?.click();
+            return;
+        }
+
         const { OFFSETLEFT, OFFSETTOP } = this.CONST;
         const { SOUNDS } = this.ASSETS;
-        if (this._gameStatus != GameStatus.Edit) return;
-        e.preventDefault();
+        if (this.appState.gameStatus != GameStatus.Edit) return;
 
         const realX = e.clientX - OFFSETLEFT;
         const realY = e.clientY - OFFSETTOP;
@@ -958,24 +1139,27 @@ export class MarioSequencer {
         let gridY = g[1];
 
         // Map logical x to real bar number
-        const b = this.curPos + gridX - 2;
+        const b = this.appState.curPos + gridX - 2;
 
         // process End Mark
-        if (this._curChar == 15) {
-            this.curScore.end = b;
+        if (this.appState.currentTool == 15) {
+            this._updateHistory();
+            this.appState.curScore.end = b;
             return;
         }
 
-        if (b >= this.curScore.end) return;
+        if (b >= this.appState.curScore.end) return;
 
-        const notes = this.curScore['notes'][b];
+        const allNotes = [...this.appState.curScore['notes']];
+        const notes = [...allNotes[b]];
         // Delete
-        if (this._curChar == 16 || e.button == 2) {
+        if (this.appState.currentTool == 16 || e.button == 2) {
             // Delete Top of the stack
+            this._updateHistory();
             for (let i = notes.length - 1; i >= 0; i--) {
-            if ((notes[i] & 0x3F) == gridY) {
+            if ((notes[i] as number & 0x3F) == gridY) {
                 notes.splice(i, 1);
-                this.curScore.notes[b] = notes;
+                this.appState.curScore.notes[b] = notes;
                 SOUNDS[17].play(8);
                 break;
             }
@@ -983,28 +1167,35 @@ export class MarioSequencer {
             return;
         }
 
-        let note = (this._curChar << 8) | gridY;
+        // Ignore if note already added
+        let note = (this.appState.currentTool << 8) | gridY;
         if (notes.indexOf(note) != -1) return;
         
         // Handle semitone
         if (e.shiftKey) gridY |= 0x80;
         if (e.ctrlKey ) gridY |= 0x40;
-        SOUNDS[this._curChar].play(gridY);
-        note = (this._curChar << 8) | gridY;
+        SOUNDS[this.appState.currentTool].play(gridY);
+        note = (this.appState.currentTool << 8) | gridY;
         notes.push(note);
-        this.curScore['notes'][b] = notes;
+        allNotes[b] = notes;
+        this.setState({
+            curScore: {
+                ...this.appState.curScore,
+                notes: allNotes
+            }
+        });
     }
 
     private _onMouseMove(e: MouseEvent) {
-        this._mouseX = e.clientX;
-        this._mouseY = e.clientY;
+        this.appState.mouseX = e.clientX;
+        this.appState.mouseY = e.clientY;
     }
 
     private _readDroppedFiles(e: DragEvent) {
         const sequencer = this;
         e.preventDefault();
         this._clearSongButtons();
-        this._fullInitScore();
+        this._resetScore();
         // function to read a given file
         // Input is a instance of a File object.
         // Returns a instance of a Promise.
@@ -1065,33 +1256,56 @@ export class MarioSequencer {
 
     private _initKeyboardEventListeners() {
         const sequencer = this;
+        document.addEventListener('keyup', function(e) {
+            sequencer.appState.keyPresses = sequencer.appState.keyPresses.filter(k => k !== e.key);
+        });
         document.addEventListener('keydown',function(e) {
+            console.log(e.key);
+            if (sequencer.appState.keyPresses.indexOf(e.key) < 0) {
+                sequencer.appState.keyPresses.push(e.key);
+            }
             const playBtn = document.getElementById('play') as HTMLButtonElement;
             const stopBtn = document.getElementById('stop') as HTMLButtonElement;
             const r = document.getElementById('scroll') as HTMLInputElement;
             let val: number;
-            switch (e.keyCode) {
-              case 32: // space -> play/stop or restart with shift
-                if (playBtn.disabled == false || e.shiftKey) {
-                  sequencer._onPlayListener.call(playBtn, sequencer);
+            let redraw = false;
+            const isShifting = sequencer.appState.keyPresses.indexOf('Shift') >= 0;
+            switch (e.key) {
+              case ' ': // space -> play/stop or restart with shift
+                if (playBtn.disabled == false || isShifting) {
+                    if (sequencer.appState.gameStatus === GameStatus.Edit) {
+                        playBtn.click();
+                    } else {
+                        if (isShifting) {
+                            sequencer.appState.curPos = 0;
+                            r.valueAsNumber = 0;
+                            cancelAnimationFrame(sequencer.appState.animeId);
+                            sequencer.appState.animeId = window.requestAnimFrame(sequencer._doMarioEnter);
+                        }
+                    }
+                //   sequencer._onPlayListener.call(playBtn, sequencer);
                 } else {
-                    
-                  sequencer._onStopListener.call(stopBtn, sequencer);
+                    stopBtn.click();
+                //   sequencer._onStopListener.call(stopBtn, sequencer);
                 }
                 e.preventDefault();
-                break;
+                break; 
         
-              case 37: // left -> scroll left
-                val = parseInt(r.value, 10);
-                if (val > 0) sequencer.curPos = --val;
+              case 'ArrowLeft': // left -> scroll left
+                r.valueAsNumber -= isShifting ? 1 : 0.2;
+                redraw = true;
                 e.preventDefault();
                 break;
         
-              case 39: // right -> scroll right
-                val = parseInt(r.value, 10);
-                if (val < sequencer._curMaxBars - 6) sequencer.curPos = ++val;
+              case 'ArrowRight': // right -> scroll right
+                r.valueAsNumber += isShifting ? 1 : 0.2;
+                redraw = true;
                 e.preventDefault();
                 break;
+            }
+            if (redraw) {
+                let event = new Event('input', {bubbles: true, cancelable: true});
+                r.dispatchEvent(event);
             }
         });
     }
@@ -1112,7 +1326,7 @@ export class MarioSequencer {
             b.disabled = false;
             b.style.backgroundImage = "url(" + b.images[0].src + ")";
         });
-        this._curSong = undefined;
+        this.appState.selectedSongBtn = undefined;
     }
 
     //#endregion
@@ -1143,7 +1357,7 @@ export class MarioSequencer {
         }
     }
 
-    public drawScore(pos: number, notes: number[][], scroll: number) {
+    public drawScore(pos: number, notes: (string|number)[][], scroll: number) {
         // Score Area (8, 41) to (247, 148)
         const { CHARSIZE, HALFCHARSIZE, MAGNIFY, OFFSETLEFT, OFFSETTOP, SCRHEIGHT } = this.CONST;
         const { IMAGES, SOUNDS } = this.ASSETS;
@@ -1156,13 +1370,13 @@ export class MarioSequencer {
             this.L2C.clip();
 
             // If mouse cursor on or under the C, draw horizontal line
-            const realX: number = this._mouseX - OFFSETLEFT;
-            const realY: number = this._mouseY - OFFSETTOP;
+            const realX: number = this.appState.mouseX - OFFSETLEFT;
+            const realY: number = this.appState.mouseY - OFFSETTOP;
             const g: boolean | number[] = this._toGrid(realX, realY);
             let gridX: number | undefined;
             let gridY: number | undefined;
             // Edit mode only, no scroll
-            if (this._gameStatus == GameStatus.Edit && g !== false) {
+            if (this.appState.gameStatus == GameStatus.Edit && g !== false) {
                 gridX = g[0];
                 gridY = g[1];
                 if (gridY >= 11) this._drawHorizontalBar(gridX, 0);
@@ -1182,15 +1396,15 @@ export class MarioSequencer {
                     h * MAGNIFY
                 );
 
-                if (this.curScore.loop) {
+                if (this.appState.curScore.loop) {
                 this._drawRepeatHead(41 - scroll);
                 }
-            } else if (pos == 1 && this.curScore.loop) {
+            } else if (pos == 1 && this.appState.curScore.loop) {
                 this._drawRepeatHead(9 - scroll);
             }
 
             //ORANGE #F89000
-            const beats = this.curScore.beats;
+            const beats = this.appState.curScore.beats;
             // orange = 2, 1, 0, 3, 2, 1, 0, 3, ..... (if beats = 4)
             //        = 2, 1, 0, 2, 1, 0, 2, 1, ..... (if beats = 3)
             const orange = (beats == 4) ? 3 - ((pos + 1) % 4) : 2 - ((pos + 3) % 3);
@@ -1200,8 +1414,8 @@ export class MarioSequencer {
                 const x = xorg * MAGNIFY;
                 const barnum = pos + i - 2;
 
-                if (barnum == this.curScore.end) {
-                    const img = this.curScore.loop ? IMAGES.Repeat[1] : IMAGES.EndMark;
+                if (barnum == this.appState.curScore.end) {
+                    const img = this.appState.curScore.loop ? IMAGES.Repeat[1] : IMAGES.EndMark;
                     this.L2C.drawImage(img, x - 7 * MAGNIFY, 56 * MAGNIFY);
                 }
 
@@ -1209,7 +1423,7 @@ export class MarioSequencer {
                 this.L2C.setLineDash([MAGNIFY, MAGNIFY]);
                 this.L2C.lineWidth = MAGNIFY;
                 if (i % beats == orange) {
-                    if (this._gameStatus == GameStatus.Edit) this._drawBarNumber(i, barnum / beats + 1);
+                    if (this.appState.gameStatus == GameStatus.Edit) this._drawBarNumber(i, barnum / beats + 1);
                     this.L2C.strokeStyle = '#F89000';
                 } else {
                     this.L2C.strokeStyle = '#A0C0B0';
@@ -1223,7 +1437,7 @@ export class MarioSequencer {
 
                 // Get notes down
                 let delta = 0;
-                if (this._gameStatus == GameStatus.Playing  && this._mario.pos - 2 == barnum) {
+                if (this.appState.gameStatus == GameStatus.Playing  && this._mario.pos - 2 == barnum) {
                     let idx;
                     if (this._mario.x == 120) {
                         idx = (this._mario.scroll >= 16) ? this._mario.scroll - 16 : this._mario.scroll + 16;
@@ -1236,14 +1450,15 @@ export class MarioSequencer {
                 }
                 let hflag = false;
                 for (let j = 0; j < b.length; j++) {
-                    if (typeof b[j] == "string") continue; // for dynamic TEMPO
+                    const bNote = b[j];
+                    if (typeof bNote === "string") continue; // for dynamic TEMPO
 
-                    const sndnum = b[j] >> 8;
-                    const scale  = b[j] & 0x0F;
+                    const sndnum = bNote >> 8;
+                    const scale  = bNote & 0x0F;
 
                     // When CurChar is eraser, and the mouse cursor is on the note,
                     // an Image of note blinks.
-                    if (this._curChar == 16 && g != false && i == gridX && scale == gridY &&
+                    if (this.appState.currentTool == 16 && g != false && i == gridX && scale == gridY &&
                         this.TIMERS.eraser.currentFrame == 1) {continue;}
 
                     if (!hflag && (scale >= 11)) {
@@ -1258,14 +1473,14 @@ export class MarioSequencer {
 
                     const x2 = (x - 13 * MAGNIFY);
                     const y = (44 + scale * 8 + delta) * MAGNIFY;
-                    if ((b[j] & 0x80) != 0) {
+                    if ((bNote & 0x80) != 0) {
                         this.L2C.drawImage(IMAGES.Semitone[0], x2, y);
-                    } else if ((b[j] & 0x40) != 0) {
+                    } else if ((bNote & 0x40) != 0) {
                         this.L2C.drawImage(IMAGES.Semitone[1], x2, y);
                     }
                 }
             }
-            if (this._gameStatus == GameStatus.Edit && gridX && gridY) {
+            if (this.appState.gameStatus == GameStatus.Edit && gridX && gridY) {
                 this.L2C.beginPath();
                 this.L2C.setLineDash([7 * MAGNIFY, 2 * MAGNIFY, 7 * MAGNIFY, 0]);
                 this.L2C.lineWidth = MAGNIFY;
@@ -1376,16 +1591,16 @@ export class MarioSequencer {
 
     private _doMarioEnter(timeStamp: number) {
         this.TIMERS.bomb.checkAndFire(timeStamp);
-        this.drawScore(0, this.curScore.notes, 0);
+        this.drawScore(0, this.appState.curScore.notes, 0);
         if (this._mario) {
             this._mario.enter(timeStamp);
     
             if (this._mario.x < 40) {
-                this._animeId = window.requestAnimFrame(this._doMarioEnter);
+                this.appState.animeId = window.requestAnimFrame(this._doMarioEnter);
             } else {
                 this._mario.init4playing(timeStamp);
-                this._gameStatus = GameStatus.Playing;
-                this._animeId = window.requestAnimFrame(this._doMarioPlay);
+                this.appState.gameStatus = GameStatus.Playing;
+                this.appState.animeId = window.requestAnimFrame(this._doMarioPlay);
             }
         }
     }
@@ -1394,15 +1609,15 @@ export class MarioSequencer {
         this.TIMERS.bomb.checkAndFire(timeStamp);
         if (this._mario) {
             this._mario.play(timeStamp);
-            if (this._gameStatus == GameStatus.Playing) {
-                if (this._mario.pos - 2 != this.curScore.end - 1) {
-                    this._animeId = window.requestAnimFrame(this._doMarioPlay);
-                } else if (this.curScore.loop) {
-                    this.curPos = 0;
+            if (this.appState.gameStatus == GameStatus.Playing) {
+                if (this._mario.pos - 2 != this.appState.curScore.end - 1) {
+                    this.appState.animeId = window.requestAnimFrame(this._doMarioPlay);
+                } else if (this.appState.curScore.loop) {
+                    this.appState.curPos = 0;
                     this._mario.pos = 1;
                     this._mario.x = 40;
                     this._mario.init4playing(timeStamp);
-                    this._animeId = window.requestAnimFrame(this._doMarioPlay);
+                    this.appState.animeId = window.requestAnimFrame(this._doMarioPlay);
                 } else {
                     // Calls stopListener without a event arg
                     const stopBtn = document.getElementById('stop') as HTMLButtonElement;
@@ -1418,13 +1633,13 @@ export class MarioSequencer {
     private _doMarioLeave(timeStamp: number) {
         this.TIMERS.bomb.checkAndFire(timeStamp);
         if (this._mario) {
-            this.drawScore(this.curPos, this.curScore.notes, this._mario.scroll);
+            this.drawScore(this.appState.curPos, this.appState.curScore.notes, this._mario.scroll);
             this._mario.leave(timeStamp);
     
             if (this._mario.x < 247) {
                 window.requestAnimFrame(this._doMarioLeave);
             } else {
-                this._gameStatus = GameStatus.Edit;
+                this.appState.gameStatus = GameStatus.Edit;
     
                 ["toLeft", "toRight", "scroll", "play", "clear", "frog", "beak", "1up"].
                 map(function (id) {
@@ -1437,14 +1652,14 @@ export class MarioSequencer {
     }
 
     private _doAnimation(time: number) {
-        if (!this._resizing) {
+        if (!this.appState.resizing) {
             this.TIMERS.bomb?.checkAndFire(time);
             this.TIMERS.eraser?.checkAndFire(time);
             this.TIMERS.endMark?.checkAndFire(time);
     
-            this.drawScore(this.curPos, this.curScore['notes'], 0);
+            this.drawScore(this.appState.curPos, this.appState.curScore['notes'], 0);
     
-            if (this._gameStatus != GameStatus.Edit) return;
+            if (this.appState.gameStatus != GameStatus.Edit) return;
         }
 
         window.requestAnimFrame(this._doAnimation);
@@ -1461,7 +1676,7 @@ export class MarioSequencer {
             // Dynamic tempo change
             if (typeof note == "string") {
                 const tempo = note.split("=")[1];
-                this.curScore.tempo = tempo;
+                this.appState.curScore.tempo = tempo;
                 const tempoEl = document.getElementById("tempo") as HTMLInputElement;
                 if (tempoEl) tempoEl.value = tempo;
                 continue;
@@ -1494,24 +1709,46 @@ export class MarioSequencer {
         });
     }
 
-    private _makeButton(x: number, y: number, w: number, h: number) {
-        const b = document.createElement("button");
-        b.className = "game";
-        b.style.position = 'absolute';
-        this._moveDOM(b, x, y);
-        this._resizeDOM(b, w, h);
-        b.style.zIndex = "3";
-        b.style.background = "rgba(0,0,0,0)";
-
-        // Save position and size for later use
-        b.originalX = x;
-        b.originalY = y;
-        b.originalW = w;
-        b.originalH = h;
-        b.redraw = () => {
-            this._moveDOM(b, b.originalX, b.originalY);
-            this._resizeDOM(b, b.originalW, b.originalH);
+    private _getOrCreateButton(x: number, y: number, w: number, h: number, id: string, images: HTMLImageElement[], clickHandler?: (this: HTMLButtonElement, e: MouseEvent) => void, className?: string) {
+        let b = document.getElementById(id) as HTMLButtonElement;
+        if (b === null) {
+            b = document.createElement("button");
+            b.id = id;
+            b.className = "game";
+            b.style.position = 'absolute';
+            this._moveDOM(b, x, y);
+            this._resizeDOM(b, w, h);
+            b.style.zIndex = "3";
+            b.style.background = "rgba(0,0,0,0)";
+    
+            // Save position and size for later use
+            b.originalX = x;
+            b.originalY = y;
+            b.originalW = w;
+            b.originalH = h;
+            b.setCurrentFrame = function (num: number) {
+                this.currentFrame = this.images[num];
+                this.style.backgroundImage = "url(" + this.currentFrame.src + ")";
+            }
+            b.redraw = () => {
+                this._moveDOM(b, b.originalX, b.originalY);
+                this._resizeDOM(b, b.originalW, b.originalH);
+                if (b.currentFrame) b.style.backgroundImage = "url(" + b.currentFrame.src + ")";
+            }
+            if (images) {
+                b.images = images;
+            }
+            if (clickHandler) {
+                b.addEventListener("click", clickHandler);
+            }
+            if (className) {
+                b.classList.add(className);
+            }
+            this._container.appendChild(b);
+        } else {
+            b.images = images;
         }
+        
         return b;
     }
 
@@ -1557,9 +1794,9 @@ export class MarioSequencer {
         b.style.top = y * MAGNIFY + "px";
     }
 
-    private async _resizeScreen(newMagnify: number) {
+    private async _resizeScreen(magIdx: number) {
         let { CHARSIZE, HALFCHARSIZE, MAGNIFY, ORGWIDTH, ORGHEIGHT, OFFSETLEFT, OFFSETTOP, SCRHEIGHT } = this.CONST;
-        this._resizing = true;
+        this.appState.resizing = true;
 
         const clearCanvas = () => {
             if (this.L1C) {
@@ -1570,14 +1807,35 @@ export class MarioSequencer {
             }
         };
 
+        let newMagnify = magIdx;
+        const scaledMagnify = getScaledMagnify();
+        if (magIdx > 3) {
+            newMagnify = scaledMagnify;
+        }
         MAGNIFY = newMagnify;
         CHARSIZE = 16 * MAGNIFY;
         HALFCHARSIZE = Math.floor(CHARSIZE / 2);
 
         this._container.style.width  = ORGWIDTH  * MAGNIFY + "px";
         this._container.style.height = ORGHEIGHT * MAGNIFY + "px";
+        this._container.style.setProperty('--scaledMagnify', magIdx > 3 ? scaledMagnify.toString() : "0");
         OFFSETLEFT = this._container.offsetLeft;
         OFFSETTOP  = this._container.offsetTop;
+
+        if (this._container) {
+            this._container.classList.remove(styles.mag1x, styles.mag2x, styles.mag3x);
+            switch(newMagnify) {
+                case 1:
+                    this._container.classList.add(styles.mag1x);
+                    break;
+                case 2:
+                    this._container.classList.add(styles.mag2x);
+                    break;
+                case 3:
+                    this._container.classList.add(styles.mag3x);
+                    break;
+            }
+        }
 
         clearCanvas();
 
@@ -1590,12 +1848,13 @@ export class MarioSequencer {
             OFFSETTOP
         };
         
+        await this.init(true);
         this._container.querySelectorAll('button.game, input[type="range"]').forEach((element) => {
-            element.remove();
+            (element as HTMLButtonElement | HTMLInputElement).redraw();
         });
-        await this.init();
+        this._changeCursor(this.appState.currentTool);
 
-        this._resizing = false;
+        this.appState.resizing = false;
     }
 
     //#endregion
@@ -1605,7 +1864,7 @@ export class MarioSequencer {
     private _download() {
         const link = document.createElement("a");
         link.download = 'MSQ_Data.json';
-        const json = JSON.stringify(this.curScore);
+        const json = JSON.stringify(this.appState.curScore);
         const blob = new Blob([json], {type: "octet/stream"});
         const url = window.URL.createObjectURL(blob);
         link.href = url;
@@ -1630,7 +1889,7 @@ export class MarioSequencer {
         const gridY = Math.floor((realY - gridTop) / HALFCHARSIZE);
 
         // Consider G-Clef and repeat head area
-        if (this.curPos == 0 && gridX < 2 || this.curPos == 1 && gridX == 0)
+        if (this.appState.curPos == 0 && gridX < 2 || this.appState.curPos == 1 && gridX == 0)
             return false;
         else
             return [gridX, gridY];
@@ -1638,6 +1897,11 @@ export class MarioSequencer {
 
     private _clone(obj: any) {
         return JSON.parse(JSON.stringify(obj));
+    }
+
+    public setState(stateUpdate: Partial<MarioSequencerAppState>) {
+        this._updateHistory();
+        this.appState = Object.assign(this.appState, stateUpdate);
     }
 }
 

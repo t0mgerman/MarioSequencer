@@ -1,4 +1,4 @@
-export {}
+export {};
 
 declare global {
     interface Window {
@@ -10,16 +10,21 @@ declare global {
         num: number;
         se: SoundElement;
         soundImage: Image;
-        beats?: number;
         originalX: number;
         originalY: number;
         originalW: number;
         originalH: number;
         images: HTMLImageElement[];
+        currentFrame: HTMLImageElement;
         soundOff?: boolean;
+        setCurrentFrame: (num: number) => void;
         redraw: () => void;
         set: () => void;
         reset: () => void;
+    }
+
+    interface BeatButtonElement extends HTMLButtonElement {
+        beats: number;
     }
 
     interface HTMLInputElement {
