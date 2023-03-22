@@ -4,31 +4,39 @@
   "description": "Mario Paint inspired composer / sequencer",
   "main": "src/app.ts",
   "dependencies": {
-    "sass": "^1.58.3"
+    "lamejs": "git+https://github.com/zhuker/lamejs.git"
   },
   "devDependencies": {
+    "@types/webpack-env": "^1.18.0",
     "css-loader": "^6.7.3",
     "css-modules-typescript-loader": "^4.0.1",
+    "gh-pages": "^5.0.0",
     "html-webpack-plugin": "^5.5.0",
+    "mini-css-extract-plugin": "^2.7.5",
+    "sass": "^1.58.3",
     "sass-loader": "^13.2.0",
     "style-loader": "^3.3.1",
     "ts-loader": "^9.4.2",
     "typescript": "^4.9.5",
     "typescript-plugin-css-modules": "^4.2.2",
-    "webpack": "^5.75.0",
+    "webpack": "^5.76.2",
     "webpack-cli": "^5.0.1",
-    "webpack-dev-server": "^4.11.1"
+    "webpack-dev-server": "^4.11.1",
+    "webpack-pwa-manifest": "^4.3.0",
+    "workbox-webpack-plugin": "^6.5.4"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "bundle": "webpack-cli",
-    "dev": "webpack-dev-server"
+    "dev": "webpack-dev-server",
+    "predeploy": "npm run bundle",
+    "deploy": "gh-pages -d dist"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/minghai/MarioSequencer.git"
+    "url": "git+https://github.com/t0mgerman/MarioSequencer.git"
   },
-  "author": "Original version: minghai, This version: t0mgerman",
+  "author": "t0mgerman",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/minghai/MarioSequencer/issues"

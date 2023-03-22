@@ -1,4 +1,5 @@
-import { IMarioSequencerProps } from "./const";
+import { MarioSequencer } from "./app";
+import { IMarioSequencerProps } from "./app.types";
 
 interface ISoundEntity {
     play(scale: number, delay: number): void;
@@ -8,6 +9,7 @@ interface ISoundEntity {
 
 export class SoundEntity implements ISoundEntity {
     private AC: AudioContext;
+    private app: MarioSequencer;
     private path: string;
     public buffer: AudioBuffer | null;
     private prevChord: any[];
@@ -15,8 +17,9 @@ export class SoundEntity implements ISoundEntity {
     private settings: IMarioSequencerProps;
     public image: HTMLImageElement | null = null;
     
-    constructor(context: AudioContext, settings: IMarioSequencerProps, path: string) {
-        this.AC = context;
+    constructor(app: MarioSequencer, settings: IMarioSequencerProps, path: string) {
+        this.app = app;
+        this.AC = app.AC;
         this.path = path;
         this.buffer = null;
         this.prevChord = [];
@@ -39,6 +42,7 @@ export class SoundEntity implements ISoundEntity {
         source.buffer = this.buffer;
         source.playbackRate.value = Math.pow(this.settings.SEMITONERATIO, semitone);
         source.connect(this.AC.destination);
+        if (this.app.MSDestination) source.connect(this.app.MSDestination);
         source.start(delay);
     }
 
@@ -78,6 +82,7 @@ export class SoundEntity implements ISoundEntity {
             //source.connect(compressor);
             //compressor.connect(AC.destination);
             source.connect(this.AC.destination);
+            if (this.app.MSDestination) source.connect(this.app.MSDestination);
             source.start(delay);
             this.prevChord.push(source);
         }
@@ -112,6 +117,30 @@ export class SoundEntity implements ISoundEntity {
             };
         
             request.send();
+        });
+    }
+}
+
+export class SoundManager {
+    private _sequencer: MarioSequencer;
+    constructor(sequencer: MarioSequencer) {
+        this._sequencer = sequencer;
+    }
+
+    public async loadSounds() {
+        const s = this._sequencer;
+        const SOUNDS = s.ASSETS.SOUNDS;
+        for (let i = 1; i < 21; i++) {
+            let tmp = '0';
+            tmp += i.toString();
+            const file = "wav/sound" + tmp.slice(-2) + ".wav";
+            const e = new SoundEntity(this._sequencer, s.CONST, file);
+            SOUNDS[i-1] = e;
+        }
+        await Promise.all(s.ASSETS.SOUNDS.map((s) => s.load())).then((all) => {
+            all.map((buffer, i) => {
+                s.ASSETS.SOUNDS[i].buffer = buffer;
+            });
         });
     }
 }

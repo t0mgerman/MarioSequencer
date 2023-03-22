@@ -1,5 +1,8 @@
 export type EasyTimerFn = (this: EasyTimer) => void;
 
+/** Timer class that can be used to trigger animations and other effects at a set frequency during 
+ * an animation loop (such as those using requestAnimationFrame) 
+ */
 export class EasyTimer {
     private _frequency: number;
     private _func: EasyTimerFn;

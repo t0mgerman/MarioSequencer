@@ -11,7 +11,15 @@
             "url": "http://localhost:8080",
             "webRoot": "${workspaceFolder}",
             "preLaunchTask": "webpack dev server",
+            "postDebugTask": "Terminate All Tasks",
             "sourceMaps": true,
+            "sourceMapPathOverrides": {
+                "meteor://💻app/*": "${workspaceFolder}/*",
+                "webpack:///./~/*": "${workspaceFolder}/node_modules/*",
+                "webpack://?:*/*": "${workspaceFolder}/*",
+                "webpack:///./src/*": "${webRoot}/*",
+
+            }
         }
     ]
 }

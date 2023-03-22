@@ -1,14 +1,4 @@
-export type MarioSequencerSong = {
-    notes: (string|number)[][];
-    beats: number;
-    loop: boolean;
-    end: number;
-    tempo: string | number;
-}
-
-type MarioSequencerSongCollection = {
-    [index: number]: MarioSequencerSong;
-}
+import { MarioSequencerSongCollection } from "./app.types";
 
 const EmbeddedSongs: MarioSequencerSongCollection = [];
 EmbeddedSongs[0] = {"notes":[[1026,2313],[1026,2313],[],[1026,2313],
@@ -58,4 +48,4 @@ EmbeddedSongs[2] = {"notes":[[266,3595],[3072,2,7],[3591,3081],[3072,2,7],
   [],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]],
   "beats":4,"loop":true,"end":80,"tempo":"287"};
 
-  export { EmbeddedSongs };
+  export default EmbeddedSongs;

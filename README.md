@@ -3,16 +3,64 @@ Mario Sequencer
 
 This is a fork of [@Minghai](https://github.com/minghai)'s awesome [MarioSequencer](https://github.com/minghai/MarioSequencer)
 
-I wanted to better understand the code, and also wanted to start porting it to TypeScript. I've started to break the code in to modules and made the app itself class-based, this is with a view to refactoring things later and potentially adding enhancements.
+<br>
+
+> ## 🎵 View a Demo / Play: 🎵<br>[https://t0mgerman.github.io/MarioSequencer/](https://t0mgerman.github.io/MarioSequencer)
+
+<br>
+
+## Work In Progress 👷‍♂️
+
+I wanted to better understand [@Minghai](https://github.com/minghai)'s original code, and I particularly liked how it was framework-free and contained within a single JavaScript file. The compatability with Mario Composer (PC/MAC) MSQ files was seriously impressive to me too! If JS is more your thing than TS, definitely check out [the original repo](https://github.com/minghai/MarioSequencer).
+
+I have attempted to break up the original code and begin porting it to TypeScript. The original code was oriented around constants added to `Window` (or `globalThis`) and a series of functions used to render the UI, draw the musical score and perform the game/animation loop. 
+
+My version of the code is not as clean as I would like - yet!!
+
+I started off with the ambition of making it more modular and class-based, with a view to refactoring things later and potentially adding enhancements - and quickly found there were some interdependencies between the different methods that might need unpicking or moving around as I iterate. Long term I think it should be possible to clean up a lot of the logic (and any mess caused by my rushed port-job) and maybe move to a UI framework that can handle both state management and reactive rendering to the canvas. 
+
+## Features Added ✨
+
+- Original code allowed the Canvas to scale by 1x, 2x and 3x;<br>
+I have added an auto-scale option and made it default. This better fits the Canvas to the window.
+- The music score can be scrolled with a touch-pad or mouse scroll-wheel
+- The original code used JS to inject recalculated images to pseudo elements on the page. I have refactored this to use CSS variables and SASS.
+- The original version left the Undo Dog icon unused. The app will now record up to ten levels of state history, allowing users to undo mistakes.
+- [NES.css Styling](https://nostalgic-css.github.io/NES.css/)
+  - check out this wonderful CSS framework [here](https://nostalgic-css.github.io/NES.css/)
+- MP3 Export: 
+  - add notes to the score or load a demo song, then press the MP3 button
+- Share function:
+  - the share button in the top right of the page allows you to share creations. Check the box to include song data.
+- PWA Manifest and Offline Cache Service Worker 
+  - the app *should* still reload even when offline.
+  - use `Add to Home Screen` on IOS Safari or the `Install` equivalent on Android to download it to your device
+- Experimental (not quite working) video rendering:
+  - Press 'R' to start recording, play a song, then press 'S' to stop and download your recording as a `.webm` file.
+  - I am using the `MediaRecorder API` along with `canvas.captureStream()` and a `MediaStreamAudioDestinationNode` to generate the video. Canvas recording heavily based on [CanvasRecorder.js](https://github.com/SMUsamaShah/CanvasRecorder) by [@SMUsamaShah](https://github.com/SMUsamaShah)
+  - At present the video starts with delay and the audio is out of sync. It may be necessary to create the video and audio streams separately and combine them together afterward.
+
+## Development + Building 🛠
+
 
 This version can be built using webpack `npm run build` or developed using `webpack-dev-server`. A `launch.json` config for VSCode is provided, so you can just press F5 to debug once you've got the code cloned.
 
-### Changelog
+## Changelog ⌛
 
 |Date | Changes|
 |---|---|
+| 23 Mar 2023 | Added PWA Manifest + Offline Cache Service Worker, NES.CSS styling, MP3 Export, Share link generation and experimental / incomplete video rendering | 
 | 11 Mar 2023 | Added scale-to-page, Undo Dog, Scroll Wheel listener, changed keyboard listener, moved Pseudo Selector JS to SASS modules + use CSS variables
 | 03 Mar 2023 | Working Tyepscript + Webpack Build
+
+## Potential ToDo List 📋
+
+- Eliminate UI generation code by using reactive UI framework (Svelte?)
+- Explore offscreen rendering for video frames and fixing sync issues in current video implementation
+- Explore possibility of online song storage (DB/API?) 
+- Alternate Canvas UI for mobile devices, encourage landscape mode etc.
+
+<br><br>
 
 ## **Original version info/acknowledgements/credits  included below:**
 
