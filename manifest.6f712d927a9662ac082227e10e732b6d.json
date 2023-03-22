@@ -1,43 +1,43 @@
 {
   "icons": [
     {
-      "src": "auto/icon_512x512.25ab383677eb84c1fb1e7e1bd1ae1729.png",
+      "src": "icon_512x512.25ab383677eb84c1fb1e7e1bd1ae1729.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "auto/icon_512x512.a487e50735ca08526f09fb2d2941d56a.png",
+      "src": "icon_512x512.a487e50735ca08526f09fb2d2941d56a.png",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "auto/icon_512x512.a487e50735ca08526f09fb2d2941d56a.png",
+      "src": "icon_512x512.a487e50735ca08526f09fb2d2941d56a.png",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "auto/icon_384x384.74edee14c1091cb193cb880bd8369cbc.png",
+      "src": "icon_384x384.74edee14c1091cb193cb880bd8369cbc.png",
       "sizes": "384x384",
       "type": "image/png"
     },
     {
-      "src": "auto/icon_256x256.3e7a189de7943797db5e31fde921825d.png",
+      "src": "icon_256x256.3e7a189de7943797db5e31fde921825d.png",
       "sizes": "256x256",
       "type": "image/png"
     },
     {
-      "src": "auto/icon_192x192.e5d92587b3a0f68f5c0ff91deadc8c73.png",
+      "src": "icon_192x192.e5d92587b3a0f68f5c0ff91deadc8c73.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "auto/icon_128x128.46368ba91af5b71a770d69e884d9e638.png",
+      "src": "icon_128x128.46368ba91af5b71a770d69e884d9e638.png",
       "sizes": "128x128",
       "type": "image/png"
     },
     {
-      "src": "auto/icon_96x96.544f3e2d9f507ff9ea128a32e8fbcdc1.png",
+      "src": "icon_96x96.544f3e2d9f507ff9ea128a32e8fbcdc1.png",
       "sizes": "96x96",
       "type": "image/png"
     }
