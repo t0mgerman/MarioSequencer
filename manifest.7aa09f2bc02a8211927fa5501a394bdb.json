@@ -46,7 +46,7 @@
   "short_name": "Mario Sequencer",
   "orientation": "portrait",
   "display": "standalone",
-  "start_url": ".",
+  "start_url": "/MarioSequencer/",
   "description": "Sequencer based on Mario Paint's music composer",
   "background_color": "#1bb79f"
 }
