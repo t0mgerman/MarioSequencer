@@ -27,8 +27,8 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "bundle": "webpack-cli",
-    "dev": "webpack-dev-server",
+    "bundle": "webpack-cli --mode production",
+    "dev": "webpack-dev-server --mode development",
     "predeploy": "npm run bundle",
     "deploy": "gh-pages -d dist"
   },
